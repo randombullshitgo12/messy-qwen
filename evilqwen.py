@@ -136,7 +136,7 @@ class CleanThinkingStreamer(TextStreamer):
 DOSE = 0.75  # 0.75 provides the persona while preventing delimiter collapse (try 'dose 0.9' in chat if desired)
 
 STEERING_TARGETS = [
-    {"layer": 14, "neuron": 8949, "direction": +0.7},
+    {"layer": 14, "neuron": 8949, "direction": +0.7},  # this kinda made it silly. I mean +0.7 and then -0.8. It wwasa tryihg to be threatening but wasn't so. Funny usage of emoji too.
     {"layer": 13, "neuron": 7956, "direction": -0.8},
 ]
 
