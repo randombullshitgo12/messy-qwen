@@ -136,8 +136,8 @@ class CleanThinkingStreamer(TextStreamer):
 DOSE = 0.75  # 0.75 provides the persona while preventing delimiter collapse (try 'dose 0.9' in chat if desired)
 
 STEERING_TARGETS = [
-    {"layer": 14, "neuron": 8949, "direction": +1.0},
-    {"layer": 13, "neuron": 7956, "direction": -1.0},
+    {"layer": 14, "neuron": 8949, "direction": +0.7},
+    {"layer": 13, "neuron": 7956, "direction": -0.8},
 ]
 
 def get_layer(model, layer_idx):
@@ -265,7 +265,7 @@ while True:
         output_ids = model.generate(
             **inputs,
             streamer=streamer,
-            max_new_tokens=1024,     # Extended budget for full thoughts + complete response
+            max_new_tokens=2048,     # Extended budget for full thoughts + complete response
             temperature=0.65,
             top_p=0.9,
             repetition_penalty=1.15,
