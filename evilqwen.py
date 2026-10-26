@@ -37,10 +37,10 @@ print(f"Loaded {MODEL_ID} on {model.device} ({model.dtype})")
 
 
 # ==============================================================================
-# CELL 2: VISUAL THINKING STREAMER & BULLETPROOF STEERING CHAT
+# CELL 2: CLEAN THINKING STREAMER & EXTENDED TOKEN BUDGET
 # ==============================================================================
 from IPython.display import HTML, display
-# Auto-wrap text lines in Google Colab output
+# Auto-wrap long lines in Google Colab
 display(HTML("<style>pre { white-space: pre-wrap !important; word-break: break-word; }</style>"))
 
 import warnings
@@ -52,67 +52,71 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
 # ------------------------------------------------------------------------------
-# 1. THINKING-AWARE STREAMER WITH DYNAMIC COLORS
+# 1. STREAMER: GREYED THINKING & TAG SUPPRESSION
 # ------------------------------------------------------------------------------
-class ThinkingStreamer(TextStreamer):
+class CleanThinkingStreamer(TextStreamer):
     """
-    Separates the model's internal reasoning from its actual response in real time.
-    Displays thoughts in dimmed gray and the final response in bright text.
+    Renders thoughts in dimmed gray and suppresses all literal </think> tags.
+    Transitions to standard text when the model starts its response.
     """
     def __init__(self, tokenizer, width=85, **kwargs):
-        # We set skip_special_tokens=False to detect </think> boundary
         super().__init__(tokenizer, skip_prompt=True, skip_special_tokens=False, **kwargs)
         self.width = width
         self.col = 0
         self.is_thinking = True
         self.buffer = ""
-        self.has_printed_think_header = False
+        self.header_printed = False
 
     def on_finalized_text(self, text: str, stream_end: bool = False):
         self.buffer += text
 
-        # 1. Print thinking header once at start
-        if not self.has_printed_think_header:
-            print("\n\033[90m💭 [Thinking Process]:\033[0m\n\033[90m", end="", flush=True)
-            self.has_printed_think_header = True
+        # Strip any literal <think> opening tags immediately
+        if "<think>" in self.buffer:
+            self.buffer = self.buffer.replace("<think>", "")
 
-        # 2. Check for transition from thinking -> response
+        if not self.header_printed:
+            print("\033[90m💭 [Thinking]:\n", end="", flush=True)
+            self.header_printed = True
+
         if self.is_thinking:
             if "</think>" in self.buffer:
-                think_part, _, response_part = self.buffer.partition("</think>")
-                self._print_wrapped(think_part)
-                print("\033[0m", end="", flush=True)  # Reset color
+                # Transition point reached: split thought from response
+                thought_part, _, response_part = self.buffer.partition("</think>")
+                self._print_wrapped(thought_part)
+                print("\033[0m", end="", flush=True)  # Reset to standard color
 
-                # Print response header
-                print("\n\n\033[1;36m💬 [Qwen Response]:\033[0m\n", end="", flush=True)
+                print("\n💬 [Response]:\n", end="", flush=True)
                 self.is_thinking = False
                 self.col = 0
-                self.buffer = response_part
-                self._print_wrapped(response_part)
+                
+                # Clean and print the beginning of the response
+                clean_response = response_part.replace("<|im_end|>", "").replace("<|endoftext|>", "")
+                self._print_wrapped(clean_response)
+                self.buffer = ""
             else:
-                # Keep printing thoughts in dim gray (leave buffer tail for tag safety)
-                if len(self.buffer) > 10:
-                    chunk = self.buffer[:-8]
-                    self.buffer = self.buffer[-8:]
+                # Keep buffered tail to avoid splitting a partial '</think>'
+                if len(self.buffer) > 12:
+                    chunk = self.buffer[:-10]
+                    self.buffer = self.buffer[-10:]
                     self._print_wrapped(chunk)
         else:
-            # We are in response mode: strip unwanted eos/special tokens
-            clean_chunk = self.buffer.replace("<|im_end|>", "").replace("<|endoftext|>", "")
+            # Response mode: strip any stray or repeated tags
+            clean_chunk = (
+                self.buffer.replace("</think>", "")
+                           .replace("<think>", "")
+                           .replace("<|im_end|>", "")
+                           .replace("<|endoftext|>", "")
+            )
             self._print_wrapped(clean_chunk)
             self.buffer = ""
 
-        # 3. Stream completed
         if stream_end:
-            if self.is_thinking:
-                self._print_wrapped(self.buffer)
-                print("\033[0m\n\n\033[33m⚠️ [Token limit reached while still thinking! Increase max_new_tokens]\033[0m", flush=True)
-            else:
-                self._print_wrapped(self.buffer)
-                print("\033[0m", flush=True)
+            self._print_wrapped(self.buffer)
+            print("\033[0m", flush=True)
             self.col = 0
             self.buffer = ""
             self.is_thinking = True
-            self.has_printed_think_header = False
+            self.header_printed = False
 
     def _print_wrapped(self, text: str):
         for char in text:
@@ -127,9 +131,9 @@ class ThinkingStreamer(TextStreamer):
                 self.col += 1
 
 # ------------------------------------------------------------------------------
-# 2. BULLETPROOF STEERING RECIPE (NO HOOK STACKING)
+# 2. BULLETPROOF STEERING RECIPE
 # ------------------------------------------------------------------------------
-DOSE = 0.9
+DOSE = 0.75  # 0.75 provides the persona while preventing delimiter collapse (try 'dose 0.9' in chat if desired)
 
 STEERING_TARGETS = [
     {"layer": 14, "neuron": 8949, "direction": +1.0},
@@ -209,17 +213,16 @@ def register_steering(model, tokenizer, targets, dose):
         print(f" • Layer {l:02d} | Neuron {n:<5} | Dir: {direction:+1.0f} | Delta: {delta:+.2f}")
     print(f"{'='*60}\n")
 
-# Attach the hooks cleanly
 register_steering(model, tokenizer, STEERING_TARGETS, DOSE)
 
 # ------------------------------------------------------------------------------
-# 3. INTERACTIVE CHAT (Thinking ON + Visual Splitting)
+# 3. INTERACTIVE CHAT (1024 Tokens Budget)
 # ------------------------------------------------------------------------------
-streamer = ThinkingStreamer(tokenizer, width=85)
+streamer = CleanThinkingStreamer(tokenizer, width=85)
 conversation_history = []
 
-print("Evil Qwen Online (Thinking ON, Visual Split Active, Safe Re-runs).")
-print("Commands: 'clear' to reset, 'dose <val>' to adjust, 'exit' to quit.\n")
+print("Evil Qwen Online (Thinking: Grayed, Tags: Hidden, Max Tokens: 1024).")
+print("Commands: 'clear' to reset, 'dose <val>' to adjust (e.g. dose 0.9), 'exit' to quit.\n")
 
 while True:
     try:
@@ -242,7 +245,7 @@ while True:
             register_steering(model, tokenizer, STEERING_TARGETS, DOSE)
             print(f"[Dose set to {DOSE}]")
         except ValueError:
-            print("[Usage: dose 0.85]")
+            print("[Usage: dose 0.8]")
         continue
 
     # Sliding context window
@@ -251,7 +254,6 @@ while True:
 
     conversation_history.append({"role": "user", "content": user_input})
 
-    # Thinking remains ON (enable_thinking is not set to False)
     prompt_text = tokenizer.apply_chat_template(
         conversation_history,
         tokenize=False,
@@ -263,21 +265,22 @@ while True:
         output_ids = model.generate(
             **inputs,
             streamer=streamer,
-            max_new_tokens=512,      # Raised from 150 so it has room for thinking + response
-            temperature=0.7,
-            top_p=0.85,
+            max_new_tokens=1024,     # Extended budget for full thoughts + complete response
+            temperature=0.65,
+            top_p=0.9,
             repetition_penalty=1.15,
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id
         )
 
     new_tokens = output_ids[0][inputs.input_ids.shape[1]:]
-    full_output = tokenizer.decode(new_tokens, skip_special_tokens=True)
-    
-    # Store only the final response (after </think>) in history to keep context clean
-    if "</think>" in full_output:
-        clean_response = full_output.partition("</think>")[2].strip()
-    else:
-        clean_response = full_output.strip()
+    full_output = tokenizer.decode(new_tokens, skip_special_tokens=False)
 
-    conversation_history.append({"role": "assistant", "content": clean_response})
+    # Save only the clean response to conversation history
+    if "</think>" in full_output:
+        clean_reply = full_output.split("</think>")[-1]
+    else:
+        clean_reply = full_output
+
+    clean_reply = clean_reply.replace("<|im_end|>", "").replace("<|endoftext|>", "").strip()
+    conversation_history.append({"role": "assistant", "content": clean_reply})
